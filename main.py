@@ -70,7 +70,7 @@ class MainWindow(base_class, form_class):
 
         # ── YOLO 모델 ──
         self.model = None
-        if HAS_YOLO: 
+        if HAS_YOLO:
             try:
                 self.model = YOLO('yolo11n.pt')
                 self.labelModel.setText("모델: YOLO11n")
@@ -255,6 +255,33 @@ class MainWindow(base_class, form_class):
         print(f"ROI {len(rows_to_delete)}개 삭제, 남은 ROI: {len(self.roi_polygons)}개")
 
     # ──────────────────────────────────────────────
+    # ROI 필터링 (pixmap 좌표 → 원본 프레임 좌표 변환)
+    # ──────────────────────────────────────────────
+    def _roi_to_frame_coords(self, frame_w, frame_h):
+        """ROI 폴리곤들을 pixmap 좌표에서 원본 프레임 좌표로 변환"""
+        if not self.roi_polygons or self.pixmap_size[0] == 0:
+            return []
+
+        scale_x = frame_w / self.pixmap_size[0]
+        scale_y = frame_h / self.pixmap_size[1]
+
+        frame_polygons = []
+        for polygon in self.roi_polygons:
+            converted = np.array(
+                [(int(x * scale_x), int(y * scale_y)) for x, y in polygon],
+                dtype=np.int32,
+            )
+            frame_polygons.append(converted)
+        return frame_polygons
+
+    def _is_in_any_roi(self, point, roi_polygons_frame):
+        """하단 중심점이 ROI 폴리곤 중 하나라도 내부에 있는지 판정"""
+        for poly in roi_polygons_frame:
+            if cv2.pointPolygonTest(poly, point, False) >= 0:
+                return True
+        return False
+
+    # ──────────────────────────────────────────────
     # 프레임 업데이트
     # ──────────────────────────────────────────────
     def update_frame(self):
@@ -274,6 +301,9 @@ class MainWindow(base_class, form_class):
 
         # ── YOLO 추론 ──
         if self.ai_enabled and self.model:
+            frame_h, frame_w = frame.shape[:2]
+            roi_polys = self._roi_to_frame_coords(frame_w, frame_h)
+
             results = self.model(frame, verbose=False)
             for result in results:
                 boxes = result.boxes
@@ -284,8 +314,18 @@ class MainWindow(base_class, form_class):
                         cls_id = int(box.cls[0])
                         cls_name = self.model.names.get(cls_id, str(cls_id))
 
+                        # 하단 중심점
+                        bottom_center = (int((x1 + x2) / 2), y2)
+
+                        # ROI 필터링: ROI가 있으면 내부만, 없으면 전체
+                        if roi_polys and not self._is_in_any_roi(bottom_center, roi_polys):
+                            continue
+
                         # 경계상자
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+                        # 하단 중심점 표시
+                        cv2.circle(frame, bottom_center, 4, (0, 0, 255), -1)
 
                         # 라벨 배경 + 텍스트
                         label = f"{cls_name} {conf:.2f}"
