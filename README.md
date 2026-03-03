@@ -1,7 +1,7 @@
 
 ### 0. VER
 ver 1.0 - PyQT + 폴리곤 + AI 분석
-
+ver 1.1 - 폴리곤 내부 AI 분석 활성화
 
 ### 1. ENV
 ```bash
