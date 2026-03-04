@@ -154,6 +154,54 @@
            </property>
            <layout class="QVBoxLayout" name="falldownLayout">
             <item>
+             <layout class="QHBoxLayout" name="fallThreshLayout">
+              <item>
+               <widget class="QLabel" name="labelFallAngle">
+                <property name="text"><string>각도 임계값:</string></property>
+                <property name="styleSheet">
+                 <string notr="true">QLabel { font-size: 12px; font-weight: normal; }</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QSpinBox" name="spinFallAngle">
+                <property name="minimum"><number>10</number></property>
+                <property name="maximum"><number>80</number></property>
+                <property name="value"><number>45</number></property>
+                <property name="suffix"><string> °</string></property>
+                <property name="styleSheet">
+                 <string notr="true">QSpinBox { font-size: 12px; font-weight: normal; padding: 2px 4px; border: 1px solid #cccccc; border-radius: 3px; background-color: white; }</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QLabel" name="labelFallTime">
+                <property name="text"><string>지속 시간:</string></property>
+                <property name="styleSheet">
+                 <string notr="true">QLabel { font-size: 12px; font-weight: normal; }</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QSpinBox" name="spinFallTime">
+                <property name="minimum"><number>0</number></property>
+                <property name="maximum"><number>30</number></property>
+                <property name="value"><number>2</number></property>
+                <property name="suffix"><string> 초</string></property>
+                <property name="styleSheet">
+                 <string notr="true">QSpinBox { font-size: 12px; font-weight: normal; padding: 2px 4px; border: 1px solid #cccccc; border-radius: 3px; background-color: white; }</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <spacer name="fallThreshSpacer">
+                <property name="orientation"><enum>Qt::Horizontal</enum></property>
+                <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+               </spacer>
+              </item>
+             </layout>
+            </item>
+            <item>
              <widget class="QTextEdit" name="textFalldown">
               <property name="readOnly"><bool>true</bool></property>
               <property name="maximumSize"><size><width>16777215</width><height>120</height></size></property>
@@ -222,6 +270,15 @@
        <widget class="QPushButton" name="btnAI">
         <property name="text"><string>AI 분석</string></property>
         <property name="minimumSize"><size><width>120</width><height>40</height></size></property>
+        <property name="styleSheet">
+         <string notr="true">QPushButton { font-size: 13px; font-weight: bold; padding: 8px 16px; border: 1px solid #aaaaaa; border-radius: 3px; background-color: #e8e8e8; } QPushButton:hover { background-color: #d0d0d0; } QPushButton:pressed { background-color: #c0c0c0; }</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnKeypoint">
+        <property name="text"><string>Keypoint 시각화</string></property>
+        <property name="minimumSize"><size><width>140</width><height>40</height></size></property>
         <property name="styleSheet">
          <string notr="true">QPushButton { font-size: 13px; font-weight: bold; padding: 8px 16px; border: 1px solid #aaaaaa; border-radius: 3px; background-color: #e8e8e8; } QPushButton:hover { background-color: #d0d0d0; } QPushButton:pressed { background-color: #c0c0c0; }</string>
         </property>
@@ -332,6 +389,14 @@
       <item>
        <widget class="QLabel" name="labelAI">
         <property name="text"><string>AI 분석: 비활성화</string></property>
+        <property name="styleSheet">
+         <string notr="true">QLabel { color: red; font-size: 12px; font-weight: bold; }</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="labelKeypoint">
+        <property name="text"><string>Keypoint: 비활성화</string></property>
         <property name="styleSheet">
          <string notr="true">QLabel { color: red; font-size: 12px; font-weight: bold; }</string>
         </property>

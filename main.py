@@ -1,5 +1,6 @@
 import sys
 import time
+import math
 import cv2
 import numpy as np
 from PyQt5.QtWidgets import (
@@ -23,6 +24,43 @@ except ImportError:
     HAS_YOLO = False
 
 form_class, base_class = uic.loadUiType("main_window.ui")
+
+# COCO 17 키포인트 스켈레톤 연결 정의
+SKELETON = [
+    (0, 1), (0, 2), (1, 3), (2, 4),           # 얼굴
+    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # 상체
+    (5, 11), (6, 12), (11, 12),                # 몸통
+    (11, 13), (13, 15), (12, 14), (14, 16),    # 하체
+]
+
+# 키포인트 색상 (BGR) - 부위별 구분
+KPT_COLORS = [
+    (0, 255, 255),   # 0 nose
+    (0, 255, 200),   # 1 left_eye
+    (0, 255, 200),   # 2 right_eye
+    (0, 200, 255),   # 3 left_ear
+    (0, 200, 255),   # 4 right_ear
+    (255, 128, 0),   # 5 left_shoulder
+    (255, 128, 0),   # 6 right_shoulder
+    (255, 200, 0),   # 7 left_elbow
+    (255, 200, 0),   # 8 right_elbow
+    (255, 255, 0),   # 9 left_wrist
+    (255, 255, 0),   # 10 right_wrist
+    (0, 255, 0),     # 11 left_hip
+    (0, 255, 0),     # 12 right_hip
+    (0, 200, 128),   # 13 left_knee
+    (0, 200, 128),   # 14 right_knee
+    (0, 128, 255),   # 15 left_ankle
+    (0, 128, 255),   # 16 right_ankle
+]
+
+# 스켈레톤 연결선 색상 (BGR)
+LIMB_COLORS = [
+    (0, 255, 255), (0, 255, 255), (0, 255, 255), (0, 255, 255),  # 얼굴
+    (255, 128, 0), (255, 200, 0), (255, 255, 0), (255, 200, 0), (255, 255, 0),  # 상체
+    (0, 255, 128), (0, 255, 128), (0, 255, 0),   # 몸통
+    (0, 200, 128), (0, 128, 255), (0, 200, 128), (0, 128, 255),  # 하체
+]
 
 
 class MainWindow(base_class, form_class):
@@ -72,8 +110,8 @@ class MainWindow(base_class, form_class):
         self.model = None
         if HAS_YOLO:
             try:
-                self.model = YOLO('yolo11l.pt')
-                self.labelModel.setText("모델: YOLO11l")
+                self.model = YOLO('yolo11l-pose.pt')
+                self.labelModel.setText("모델: YOLO11l-pose")
                 self.labelModel.setStyleSheet(
                     "QLabel { color: green; font-size: 12px; font-weight: bold; }"
                 )
@@ -96,9 +134,11 @@ class MainWindow(base_class, form_class):
         self.btnROI.clicked.connect(self.toggle_roi_mode)
         self.btnDeleteROI.clicked.connect(self.delete_selected_roi)
         self.btnAI.clicked.connect(self.toggle_ai_mode)
+        self.btnKeypoint.clicked.connect(self.toggle_keypoint_mode)
 
         # ── AI 분석 상태 ──
         self.ai_enabled = False
+        self.keypoint_enabled = False
 
         # ── 배회 감지용 ──
         self.loiter_tracker = {}   # {track_id: {'enter_time', 'last_seen', 'alerted'}}
@@ -106,6 +146,9 @@ class MainWindow(base_class, form_class):
 
         # ── 침입 감지용 ──
         self.intrusion_logged = set()  # 이미 침입 알림된 track_id
+
+        # ── 쓰러짐 감지용 ──
+        self.fall_tracker = {}  # {track_id: {'fall_start', 'alerted'}}
 
         # ── 카메라 레이블 마우스 이벤트 ──
         self.labelCamera.setMouseTracking(True)
@@ -199,7 +242,23 @@ class MainWindow(base_class, form_class):
             )
             self.loiter_tracker.clear()
             self.intrusion_logged.clear()
+            self.fall_tracker.clear()
             print("AI 분석 비활성화")
+
+    def toggle_keypoint_mode(self):
+        self.keypoint_enabled = not self.keypoint_enabled
+        if self.keypoint_enabled:
+            self.labelKeypoint.setText("Keypoint: 활성화")
+            self.labelKeypoint.setStyleSheet(
+                "QLabel { color: green; font-size: 12px; font-weight: bold; }"
+            )
+            print("Keypoint 시각화 활성화")
+        else:
+            self.labelKeypoint.setText("Keypoint: 비활성화")
+            self.labelKeypoint.setStyleSheet(
+                "QLabel { color: red; font-size: 12px; font-weight: bold; }"
+            )
+            print("Keypoint 시각화 비활성화")
 
     def camera_mouse_press(self, event):
         if not self.roi_mode:
@@ -296,6 +355,54 @@ class MainWindow(base_class, form_class):
         self._flash_widget(self.textIntrusion)
         print(msg)
 
+    def _calc_torso_angle(self, kpts):
+        """어깨 중심 - 엉덩이 중심 벡터의 수직 대비 각도 계산 (0°=수평, 90°=수직)"""
+        conf_thresh = 0.5
+        l_sh = kpts[5]  # left_shoulder
+        r_sh = kpts[6]  # right_shoulder
+        l_hp = kpts[11]  # left_hip
+        r_hp = kpts[12]  # right_hip
+
+        # 양쪽 중 하나라도 confidence 부족하면 None
+        if float(l_sh[2]) < conf_thresh and float(r_sh[2]) < conf_thresh:
+            return None
+        if float(l_hp[2]) < conf_thresh and float(r_hp[2]) < conf_thresh:
+            return None
+
+        # 유효한 키포인트로 중심점 계산
+        sh_pts = []
+        if float(l_sh[2]) >= conf_thresh:
+            sh_pts.append((float(l_sh[0]), float(l_sh[1])))
+        if float(r_sh[2]) >= conf_thresh:
+            sh_pts.append((float(r_sh[0]), float(r_sh[1])))
+        sh_cx = sum(p[0] for p in sh_pts) / len(sh_pts)
+        sh_cy = sum(p[1] for p in sh_pts) / len(sh_pts)
+
+        hp_pts = []
+        if float(l_hp[2]) >= conf_thresh:
+            hp_pts.append((float(l_hp[0]), float(l_hp[1])))
+        if float(r_hp[2]) >= conf_thresh:
+            hp_pts.append((float(r_hp[0]), float(r_hp[1])))
+        hp_cx = sum(p[0] for p in hp_pts) / len(hp_pts)
+        hp_cy = sum(p[1] for p in hp_pts) / len(hp_pts)
+
+        dx = abs(hp_cx - sh_cx)
+        dy = abs(hp_cy - sh_cy)
+
+        # atan2(dy, dx) → 수직이면 ~90°, 수평이면 ~0°
+        angle = math.degrees(math.atan2(dy, dx))
+        return angle
+
+    def _log_falldown(self, track_id):
+        """쓰러짐 감지 시 우측 패널에 로그 기록"""
+        kst = QTimeZone(b"Asia/Seoul")
+        now = QDateTime.currentDateTime().toTimeZone(kst)
+        timestamp = now.toString("HH:mm:ss")
+        msg = f"[{timestamp}] ID#{track_id} 쓰러짐 감지"
+        self.textFalldown.append(msg)
+        self._flash_widget(self.textFalldown)
+        print(msg)
+
     # ──────────────────────────────────────────────
     # ROI 필터링 (pixmap 좌표 → 원본 프레임 좌표 변환)
     # ──────────────────────────────────────────────
@@ -348,16 +455,17 @@ class MainWindow(base_class, form_class):
             now = time.time()
 
             # 추적 모드로 추론 (persist=True: 프레임 간 ID 유지)
-            results = self.model.track(frame, persist=True, classes=[0], verbose=False)
+            results = self.model.track(frame, persist=True, verbose=False)
 
             current_ids_in_roi = set()
 
             for result in results:
                 boxes = result.boxes
+                keypoints = result.keypoints
                 if boxes is None:
                     continue
 
-                for box in boxes:
+                for i, box in enumerate(boxes):
                     x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                     conf = float(box.conf[0])
                     cls_id = int(box.cls[0])
@@ -421,6 +529,34 @@ class MainWindow(base_class, form_class):
                     cv2.putText(frame, label, (x1 + 2, y1 - 4),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
 
+                    # ── 키포인트 + 스켈레톤 시각화 ──
+                    if self.keypoint_enabled and keypoints is not None and i < len(keypoints):
+                        kpts = keypoints[i].data[0]  # [17, 3] (x, y, conf)
+                        self._draw_keypoints(frame, kpts)
+
+                    # ── 쓰러짐 판정 (키포인트 기반) ──
+                    if track_id is not None and keypoints is not None and i < len(keypoints):
+                        kpts = keypoints[i].data[0]
+                        angle = self._calc_torso_angle(kpts)
+                        angle_thresh = self.spinFallAngle.value()
+                        time_thresh = self.spinFallTime.value()
+
+                        if angle is not None and angle < angle_thresh:
+                            # 쓰러짐 후보 상태
+                            if track_id not in self.fall_tracker:
+                                self.fall_tracker[track_id] = {
+                                    'fall_start': now,
+                                    'alerted': False,
+                                }
+                            fall_dur = now - self.fall_tracker[track_id]['fall_start']
+                            if fall_dur >= time_thresh and not self.fall_tracker[track_id]['alerted']:
+                                self.fall_tracker[track_id]['alerted'] = True
+                                self._log_falldown(track_id)
+                        else:
+                            # 정상 자세로 복귀 → 초기화
+                            if track_id in self.fall_tracker:
+                                del self.fall_tracker[track_id]
+
             # ── 사라진 ID 정리 ──
             gone_ids = []
             for tid, info in self.loiter_tracker.items():
@@ -429,7 +565,7 @@ class MainWindow(base_class, form_class):
                         gone_ids.append(tid)
             for tid in gone_ids:
                 del self.loiter_tracker[tid]
-                self.intrusion_logged.discard(tid)
+                self.fall_tracker.pop(tid, None)
 
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = frame.shape
@@ -460,6 +596,26 @@ class MainWindow(base_class, form_class):
 
         painter.end()
         self.labelCamera.setPixmap(scaled)
+
+    def _draw_keypoints(self, frame, kpts):
+        """키포인트 점 + 스켈레톤 연결선 시각화"""
+        kpt_conf_thresh = 0.5
+
+        # 스켈레톤 연결선 그리기
+        for idx, (a, b) in enumerate(SKELETON):
+            xa, ya, ca = int(kpts[a][0]), int(kpts[a][1]), float(kpts[a][2])
+            xb, yb, cb = int(kpts[b][0]), int(kpts[b][1]), float(kpts[b][2])
+            if ca > kpt_conf_thresh and cb > kpt_conf_thresh:
+                color = LIMB_COLORS[idx] if idx < len(LIMB_COLORS) else (200, 200, 200)
+                cv2.line(frame, (xa, ya), (xb, yb), color, 2, cv2.LINE_AA)
+
+        # 키포인트 점 그리기
+        for j in range(len(kpts)):
+            x, y, c = int(kpts[j][0]), int(kpts[j][1]), float(kpts[j][2])
+            if c > kpt_conf_thresh:
+                color = KPT_COLORS[j] if j < len(KPT_COLORS) else (255, 255, 255)
+                cv2.circle(frame, (x, y), 4, color, -1, cv2.LINE_AA)
+                cv2.circle(frame, (x, y), 4, (0, 0, 0), 1, cv2.LINE_AA)
 
     def _draw_polygon(self, painter, points, finished):
         if finished:
