@@ -72,8 +72,8 @@ class MainWindow(base_class, form_class):
         self.model = None
         if HAS_YOLO:
             try:
-                self.model = YOLO('yolo11n.pt')
-                self.labelModel.setText("모델: YOLO11n")
+                self.model = YOLO('yolo11l.pt')
+                self.labelModel.setText("모델: YOLO11l")
                 self.labelModel.setStyleSheet(
                     "QLabel { color: green; font-size: 12px; font-weight: bold; }"
                 )
@@ -99,6 +99,13 @@ class MainWindow(base_class, form_class):
 
         # ── AI 분석 상태 ──
         self.ai_enabled = False
+
+        # ── 배회 감지용 ──
+        self.loiter_tracker = {}   # {track_id: {'enter_time', 'last_seen', 'alerted'}}
+        self.LOITER_GONE_SEC = 3.0  # 이 시간 동안 안 보이면 추적 해제
+
+        # ── 침입 감지용 ──
+        self.intrusion_logged = set()  # 이미 침입 알림된 track_id
 
         # ── 카메라 레이블 마우스 이벤트 ──
         self.labelCamera.setMouseTracking(True)
@@ -190,6 +197,8 @@ class MainWindow(base_class, form_class):
             self.labelAI.setStyleSheet(
                 "QLabel { color: red; font-size: 12px; font-weight: bold; }"
             )
+            self.loiter_tracker.clear()
+            self.intrusion_logged.clear()
             print("AI 분석 비활성화")
 
     def camera_mouse_press(self, event):
@@ -255,6 +264,39 @@ class MainWindow(base_class, form_class):
         print(f"ROI {len(rows_to_delete)}개 삭제, 남은 ROI: {len(self.roi_polygons)}개")
 
     # ──────────────────────────────────────────────
+    # 이벤트 감지 시 깜빡임 효과
+    # ──────────────────────────────────────────────
+    def _flash_widget(self, widget, duration_ms=2000):
+        """위젯 배경을 분홍색으로 변경 후 일정 시간 뒤 원래로 복원"""
+        original_style = widget.styleSheet()
+        flash_style = "QTextEdit { border: 1px solid #dddddd; font-size: 11px; background-color: #f8c8c8; }"
+        widget.setStyleSheet(flash_style)
+        QTimer.singleShot(duration_ms, lambda: widget.setStyleSheet(original_style))
+
+    # ──────────────────────────────────────────────
+    # 배회 이벤트 로그
+    # ──────────────────────────────────────────────
+    def _log_loitering(self, track_id):
+        """배회 감지 시 우측 패널에 로그 기록"""
+        kst = QTimeZone(b"Asia/Seoul")
+        now = QDateTime.currentDateTime().toTimeZone(kst)
+        timestamp = now.toString("HH:mm:ss")
+        msg = f"[{timestamp}] ID#{track_id} 배회 감지"
+        self.textLoitering.append(msg)
+        self._flash_widget(self.textLoitering)
+        print(msg)
+
+    def _log_intrusion(self, track_id):
+        """침입 감지 시 우측 패널에 로그 기록"""
+        kst = QTimeZone(b"Asia/Seoul")
+        now = QDateTime.currentDateTime().toTimeZone(kst)
+        timestamp = now.toString("HH:mm:ss")
+        msg = f"[{timestamp}] ID#{track_id} 침입 감지"
+        self.textIntrusion.append(msg)
+        self._flash_widget(self.textIntrusion)
+        print(msg)
+
+    # ──────────────────────────────────────────────
     # ROI 필터링 (pixmap 좌표 → 원본 프레임 좌표 변환)
     # ──────────────────────────────────────────────
     def _roi_to_frame_coords(self, frame_w, frame_h):
@@ -299,40 +341,95 @@ class MainWindow(base_class, form_class):
             self.frame_count = 0
             self.fps_start_time = time.time()
 
-        # ── YOLO 추론 ──
+        # ── YOLO 추론 + 배회 감지 ──
         if self.ai_enabled and self.model:
             frame_h, frame_w = frame.shape[:2]
             roi_polys = self._roi_to_frame_coords(frame_w, frame_h)
+            now = time.time()
 
-            results = self.model(frame, verbose=False)
+            # 추적 모드로 추론 (persist=True: 프레임 간 ID 유지)
+            results = self.model.track(frame, persist=True, classes=[0], verbose=False)
+
+            current_ids_in_roi = set()
+
             for result in results:
                 boxes = result.boxes
-                if boxes is not None:
-                    for box in boxes:
-                        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                        conf = float(box.conf[0])
-                        cls_id = int(box.cls[0])
-                        cls_name = self.model.names.get(cls_id, str(cls_id))
+                if boxes is None:
+                    continue
 
-                        # 하단 중심점
-                        bottom_center = (int((x1 + x2) / 2), y2)
+                for box in boxes:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                    conf = float(box.conf[0])
+                    cls_id = int(box.cls[0])
+                    cls_name = self.model.names.get(cls_id, str(cls_id))
 
-                        # ROI 필터링: ROI가 있으면 내부만, 없으면 전체
-                        if roi_polys and not self._is_in_any_roi(bottom_center, roi_polys):
-                            continue
+                    # 사람(person, cls_id=0)만 처리
+                    if cls_id != 0:
+                        continue
 
-                        # 경계상자
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    # track ID (추적 실패 시 None)
+                    track_id = int(box.id[0]) if box.id is not None else None
 
-                        # 하단 중심점 표시
-                        cv2.circle(frame, bottom_center, 4, (0, 0, 255), -1)
+                    # 하단 중심점
+                    bottom_center = (int((x1 + x2) / 2), y2)
 
-                        # 라벨 배경 + 텍스트
-                        label = f"{cls_name} {conf:.2f}"
-                        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
-                        cv2.rectangle(frame, (x1, y1 - th - 8), (x1 + tw + 4, y1), (0, 255, 0), -1)
-                        cv2.putText(frame, label, (x1 + 2, y1 - 4),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA)
+                    # ROI 필터링
+                    if roi_polys and not self._is_in_any_roi(bottom_center, roi_polys):
+                        continue
+
+                    # 경계상자 색상 (기본 초록, 배회 시 빨강)
+                    box_color = (0, 255, 0)
+
+                    # ── 침입 판정 (ROI 진입 즉시) ──
+                    if track_id is not None and roi_polys:
+                        if track_id not in self.intrusion_logged:
+                            self.intrusion_logged.add(track_id)
+                            self._log_intrusion(track_id)
+
+                    # ── 배회 판정 (추적 ID 있을 때만) ──
+                    if track_id is not None and roi_polys:
+                        current_ids_in_roi.add(track_id)
+
+                        if track_id not in self.loiter_tracker:
+                            self.loiter_tracker[track_id] = {
+                                'enter_time': now,
+                                'last_seen': now,
+                                'alerted': False,
+                            }
+                        else:
+                            self.loiter_tracker[track_id]['last_seen'] = now
+
+                        dwell = now - self.loiter_tracker[track_id]['enter_time']
+                        threshold = self.spinLoiterTime.value()
+
+                        if dwell >= threshold and threshold > 0:
+                            box_color = (0, 0, 255)  # 빨강
+
+                            if not self.loiter_tracker[track_id]['alerted']:
+                                self.loiter_tracker[track_id]['alerted'] = True
+                                self._log_loitering(track_id)
+
+                    # 경계상자 그리기
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+                    cv2.circle(frame, bottom_center, 4, (0, 0, 255), -1)
+
+                    # 라벨
+                    id_str = f" ID:{track_id}" if track_id is not None else ""
+                    label = f"{cls_name}{id_str} {conf:.2f}"
+                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+                    cv2.rectangle(frame, (x1, y1 - th - 8), (x1 + tw + 4, y1), box_color, -1)
+                    cv2.putText(frame, label, (x1 + 2, y1 - 4),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+
+            # ── 사라진 ID 정리 ──
+            gone_ids = []
+            for tid, info in self.loiter_tracker.items():
+                if tid not in current_ids_in_roi:
+                    if now - info['last_seen'] > self.LOITER_GONE_SEC:
+                        gone_ids.append(tid)
+            for tid in gone_ids:
+                del self.loiter_tracker[tid]
+                self.intrusion_logged.discard(tid)
 
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = frame.shape

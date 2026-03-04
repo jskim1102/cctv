@@ -65,6 +65,35 @@
            </property>
            <layout class="QVBoxLayout" name="loiteringLayout">
             <item>
+             <layout class="QHBoxLayout" name="loiterThreshLayout">
+              <item>
+               <widget class="QLabel" name="labelLoiterThresh">
+                <property name="text"><string>판정 시간(초):</string></property>
+                <property name="styleSheet">
+                 <string notr="true">QLabel { font-size: 12px; font-weight: normal; }</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QSpinBox" name="spinLoiterTime">
+                <property name="minimum"><number>0</number></property>
+                <property name="maximum"><number>100</number></property>
+                <property name="value"><number>10</number></property>
+                <property name="suffix"><string> 초</string></property>
+                <property name="styleSheet">
+                 <string notr="true">QSpinBox { font-size: 12px; font-weight: normal; padding: 2px 4px; border: 1px solid #cccccc; border-radius: 3px; background-color: white; }</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <spacer name="loiterThreshSpacer">
+                <property name="orientation"><enum>Qt::Horizontal</enum></property>
+                <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+               </spacer>
+              </item>
+             </layout>
+            </item>
+            <item>
              <widget class="QTextEdit" name="textLoitering">
               <property name="readOnly"><bool>true</bool></property>
               <property name="maximumSize"><size><width>16777215</width><height>120</height></size></property>
@@ -136,29 +165,20 @@
            </layout>
           </widget>
          </item>
-         <!-- ROI 현황 -->
+         <!-- 안전모 착용 현황 -->
          <item>
-          <widget class="QGroupBox" name="groupROI">
-           <property name="title"><string>ROI 현황</string></property>
+          <widget class="QGroupBox" name="groupHelmet">
+           <property name="title"><string>안전모 착용 현황</string></property>
            <property name="styleSheet">
             <string notr="true">QGroupBox { font-size: 13px; font-weight: bold; border: 1px solid #cccccc; border-radius: 3px; margin-top: 10px; padding-top: 15px; background-color: white; } QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }</string>
            </property>
-           <layout class="QVBoxLayout" name="roiLayout">
+           <layout class="QVBoxLayout" name="helmetLayout">
             <item>
-             <widget class="QTableWidget" name="tableROI">
-              <property name="minimumSize"><size><width>0</width><height>100</height></size></property>
-              <property name="maximumSize"><size><width>16777215</width><height>160</height></size></property>
+             <widget class="QTextEdit" name="textHelmet">
+              <property name="readOnly"><bool>true</bool></property>
+              <property name="maximumSize"><size><width>16777215</width><height>120</height></size></property>
               <property name="styleSheet">
-               <string notr="true">QTableWidget { border: 1px solid #dddddd; font-size: 13px; font-weight: bold; background-color: #fafafa; } QHeaderView::section { font-size: 13px; font-weight: bold; background-color: #f0f0f0; border: 1px solid #dddddd; padding: 4px; }</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="btnDeleteROI">
-              <property name="text"><string>삭제</string></property>
-              <property name="minimumSize"><size><width>60</width><height>30</height></size></property>
-              <property name="styleSheet">
-               <string notr="true">QPushButton { font-size: 13px; font-weight: bold; padding: 8px 16px; border: 1px solid #aaaaaa; border-radius: 3px; background-color: #e8e8e8; } QPushButton:hover { background-color: #d0d0d0; } QPushButton:pressed { background-color: #c0c0c0; }</string>
+               <string notr="true">QTextEdit { border: 1px solid #dddddd; font-size: 11px; background-color: #fafafa; }</string>
               </property>
              </widget>
             </item>
@@ -250,6 +270,36 @@
        </spacer>
       </item>
      </layout>
+    </item>
+    <!-- ROI 현황 (전체 너비) -->
+    <item>
+     <widget class="QGroupBox" name="groupROI">
+      <property name="title"><string>ROI 현황</string></property>
+      <property name="styleSheet">
+       <string notr="true">QGroupBox { font-size: 13px; font-weight: bold; border: 1px solid #cccccc; border-radius: 3px; margin-top: 10px; padding-top: 15px; background-color: white; } QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }</string>
+      </property>
+      <layout class="QHBoxLayout" name="roiLayout">
+       <item>
+        <widget class="QTableWidget" name="tableROI">
+         <property name="minimumSize"><size><width>0</width><height>60</height></size></property>
+         <property name="maximumSize"><size><width>16777215</width><height>100</height></size></property>
+         <property name="styleSheet">
+          <string notr="true">QTableWidget { border: 1px solid #dddddd; font-size: 13px; font-weight: bold; background-color: #fafafa; } QHeaderView::section { font-size: 13px; font-weight: bold; background-color: #f0f0f0; border: 1px solid #dddddd; padding: 4px; }</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="btnDeleteROI">
+         <property name="text"><string>삭제</string></property>
+         <property name="minimumSize"><size><width>80</width><height>30</height></size></property>
+         <property name="maximumSize"><size><width>80</width><height>16777215</height></size></property>
+         <property name="styleSheet">
+          <string notr="true">QPushButton { font-size: 13px; font-weight: bold; padding: 8px 16px; border: 1px solid #aaaaaa; border-radius: 3px; background-color: #e8e8e8; } QPushButton:hover { background-color: #d0d0d0; } QPushButton:pressed { background-color: #c0c0c0; }</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
     </item>
     <!-- 하단 상태바 -->
     <item>
