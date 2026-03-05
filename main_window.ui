@@ -19,20 +19,78 @@
     <item>
      <layout class="QHBoxLayout" name="contentLayout">
       <property name="spacing"><number>10</number></property>
-      <!-- 카메라 영상 영역 -->
+      <!-- 카메라 영상 영역 (2x2 그리드) -->
       <item>
-       <widget class="QLabel" name="labelCamera">
+       <widget class="QWidget" name="cameraGridWidget">
         <property name="minimumSize"><size><width>640</width><height>480</height></size></property>
         <property name="sizePolicy">
          <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
           <horstretch>3</horstretch><verstretch>0</verstretch>
          </sizepolicy>
         </property>
-        <property name="styleSheet">
-         <string notr="true">QLabel { background-color: #2d2d2d; color: #aaaaaa; font-size: 16px; border: 1px solid #555555; }</string>
-        </property>
-        <property name="text"><string>카메라 연결 대기중...</string></property>
-        <property name="alignment"><set>Qt::AlignCenter</set></property>
+        <layout class="QGridLayout" name="cameraGridLayout">
+         <property name="spacing"><number>2</number></property>
+         <property name="leftMargin"><number>0</number></property>
+         <property name="topMargin"><number>0</number></property>
+         <property name="rightMargin"><number>0</number></property>
+         <property name="bottomMargin"><number>0</number></property>
+         <item row="0" column="0">
+          <widget class="QLabel" name="labelCam1">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Ignored" vsizetype="Ignored">
+             <horstretch>1</horstretch><verstretch>1</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">QLabel { background-color: #2d2d2d; color: #aaaaaa; font-size: 20px; font-weight: bold; border: 3px solid #00ff00; }</string>
+           </property>
+           <property name="text"><string>cam1</string></property>
+           <property name="alignment"><set>Qt::AlignCenter</set></property>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <widget class="QLabel" name="labelCam2">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Ignored" vsizetype="Ignored">
+             <horstretch>1</horstretch><verstretch>1</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">QLabel { background-color: #2d2d2d; color: #aaaaaa; font-size: 20px; font-weight: bold; border: 1px solid #555555; }</string>
+           </property>
+           <property name="text"><string>cam2</string></property>
+           <property name="alignment"><set>Qt::AlignCenter</set></property>
+          </widget>
+         </item>
+         <item row="1" column="0">
+          <widget class="QLabel" name="labelCam3">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Ignored" vsizetype="Ignored">
+             <horstretch>1</horstretch><verstretch>1</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">QLabel { background-color: #2d2d2d; color: #aaaaaa; font-size: 20px; font-weight: bold; border: 1px solid #555555; }</string>
+           </property>
+           <property name="text"><string>cam3</string></property>
+           <property name="alignment"><set>Qt::AlignCenter</set></property>
+          </widget>
+         </item>
+         <item row="1" column="1">
+          <widget class="QLabel" name="labelCam4">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Ignored" vsizetype="Ignored">
+             <horstretch>1</horstretch><verstretch>1</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">QLabel { background-color: #2d2d2d; color: #aaaaaa; font-size: 20px; font-weight: bold; border: 1px solid #555555; }</string>
+           </property>
+           <property name="text"><string>cam4</string></property>
+           <property name="alignment"><set>Qt::AlignCenter</set></property>
+          </widget>
+         </item>
+        </layout>
        </widget>
       </item>
       <!-- 우측 분석 결과 패널 -->
