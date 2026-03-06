@@ -1,6 +1,7 @@
 import sys
 import time
 import math
+import os
 import cv2
 import numpy as np
 from PyQt5.QtWidgets import (
@@ -26,6 +27,8 @@ except ImportError:
 form_class, base_class = uic.loadUiType("main_window.ui")
 
 MODEL_PATH = 'yolo11l-pose.pt'
+HELMET_PATH = 'weights/helmet.pt'
+HELMET_CLS_NO = 1  # False (미착용) 클래스 ID
 
 SKELETON = [
     (0, 1), (0, 2), (1, 3), (2, 4),
@@ -80,7 +83,9 @@ class MainWindow(base_class, form_class):
 
         # YOLO 모델 (카메라별 독립 인스턴스)
         self.models = [None] * MAX_CAMS
+        self.helmet_models = [None] * MAX_CAMS
         self.model_loaded = False
+        self.helmet_loaded = False
         if HAS_YOLO:
             try:
                 test_model = YOLO(MODEL_PATH)
@@ -90,10 +95,17 @@ class MainWindow(base_class, form_class):
                 )
                 self.model_loaded = True
                 del test_model
-                print("YOLO 모델 로드 확인 완료")
+                print("YOLO pose 모델 로드 확인 완료")
             except Exception as e:
-                print(f"모델 로드 실패: {e}")
+                print(f"pose 모델 로드 실패: {e}")
                 self.labelModel.setText("모델: 로드실패")
+            try:
+                test_helmet = YOLO(HELMET_PATH)
+                self.helmet_loaded = True
+                del test_helmet
+                print("Helmet 모델 로드 확인 완료")
+            except Exception as e:
+                print(f"Helmet 모델 로드 실패: {e}")
         else:
             self.labelModel.setText("모델: ultralytics 미설치")
 
@@ -126,6 +138,8 @@ class MainWindow(base_class, form_class):
         self.loiter_trackers = [{} for _ in range(MAX_CAMS)]
         self.intrusion_logged = [set() for _ in range(MAX_CAMS)]
         self.fall_trackers = [{} for _ in range(MAX_CAMS)]
+        self.helmet_no_hat = [False] * MAX_CAMS  # 카메라별 미착용자 존재 여부
+        self.helmet_alerted = [set() for _ in range(MAX_CAMS)]  # 알림 완료된 track_id
 
         # 마우스
         for idx, label in enumerate(self.cam_labels):
@@ -171,7 +185,7 @@ class MainWindow(base_class, form_class):
 
     def _init_roi_table(self):
         self.tableROI.setColumnCount(3)
-        self.tableROI.setHorizontalHeaderLabels(["선택", "순번", "좌표"])
+        self.tableROI.setHorizontalHeaderLabels(["선택", "CAM", "좌표"])
         self.tableROI.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tableROI.setSelectionMode(QAbstractItemView.NoSelection)
         self.tableROI.verticalHeader().setVisible(False)
@@ -180,7 +194,14 @@ class MainWindow(base_class, form_class):
         header.setSectionResizeMode(1, QHeaderView.Fixed)
         header.setSectionResizeMode(2, QHeaderView.Stretch)
         self.tableROI.setColumnWidth(0, 40)
-        self.tableROI.setColumnWidth(1, 40)
+        self.tableROI.setColumnWidth(1, 50)
+
+        # 행 높이 고정 + 스크롤 설정
+        self.tableROI.verticalHeader().setDefaultSectionSize(24)
+        self.tableROI.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        # 초기 4행 빈 줄
+        self.tableROI.setRowCount(4)
 
     # ── 카메라 스캔 ──
     def _scan_cameras(self):
@@ -195,33 +216,67 @@ class MainWindow(base_class, form_class):
                 if self.models[slot] is not None:
                     del self.models[slot]
                     self.models[slot] = None
+                if self.helmet_models[slot] is not None:
+                    del self.helmet_models[slot]
+                    self.helmet_models[slot] = None
 
         empty_slots = [s for s in range(MAX_CAMS) if self.caps[s] is None]
         if not empty_slots:
             self._update_camera_status()
             return
 
+        prev_used_hw = set(used_hw)  # 새로 연결된 카메라 로그용
+
+        # OpenCV 에러 출력 억제 (스캔 중)
+        stderr_fd = sys.stderr.fileno()
+        old_stderr = os.dup(stderr_fd)
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, stderr_fd)
+
         for hw_idx in range(5):
             if hw_idx in used_hw or hw_idx in self.failed_hw_indices or not empty_slots:
                 continue
-            cap = cv2.VideoCapture(hw_idx, cv2.CAP_ANY)
-            if cap.isOpened():
-                ret, _ = cap.read()
-                if ret:
-                    slot = empty_slots.pop(0)
-                    self.caps[slot] = cap
-                    self.cam_hw_indices[slot] = hw_idx
-                    used_hw.add(hw_idx)
-                    if self.model_loaded and self.models[slot] is None:
-                        self.models[slot] = YOLO(MODEL_PATH)
-                        print(f"cam{slot + 1} 모델 인스턴스 로드")
-                    print(f"카메라 hw:{hw_idx} -> cam{slot + 1}")
-                else:
-                    cap.release()
-                    self.failed_hw_indices.add(hw_idx)
-            else:
-                cap.release()
+
+            found = False
+            for backend in [cv2.CAP_DSHOW, cv2.CAP_ANY]:
+                if found:
+                    break
+                for res_w, res_h in [(640, 480), (320, 240)]:
+                    cap = cv2.VideoCapture(hw_idx, backend)
+                    if cap.isOpened():
+                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, res_w)
+                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, res_h)
+                        ret, _ = cap.read()
+                        if ret:
+                            slot = empty_slots.pop(0)
+                            self.caps[slot] = cap
+                            self.cam_hw_indices[slot] = hw_idx
+                            used_hw.add(hw_idx)
+                            if self.model_loaded and self.models[slot] is None:
+                                self.models[slot] = YOLO(MODEL_PATH)
+                            if self.helmet_loaded and self.helmet_models[slot] is None:
+                                self.helmet_models[slot] = YOLO(HELMET_PATH)
+                            found = True
+                            break
+                        else:
+                            cap.release()
+                    else:
+                        cap.release()
+
+            if not found:
                 self.failed_hw_indices.add(hw_idx)
+
+        # stderr 복원
+        os.dup2(old_stderr, stderr_fd)
+        os.close(old_stderr)
+        os.close(devnull)
+
+        # 연결 결과 출력 (stderr 복원 후)
+        for slot in range(MAX_CAMS):
+            if self.caps[slot] is not None and self.cam_hw_indices[slot] not in prev_used_hw:
+                if self.models[slot] is not None:
+                    print(f"cam{slot + 1} 모델 인스턴스 로드")
+                print(f"카메라 hw:{self.cam_hw_indices[slot]} -> cam{slot + 1}")
 
         self._update_camera_status()
 
@@ -242,6 +297,8 @@ class MainWindow(base_class, form_class):
         self.loiter_trackers[slot].clear()
         self.intrusion_logged[slot].clear()
         self.fall_trackers[slot].clear()
+        self.helmet_no_hat[slot] = False
+        self.helmet_alerted[slot].clear()
 
     # ── 카메라 선택 ──
     def _select_camera(self, cam_idx):
@@ -386,7 +443,9 @@ class MainWindow(base_class, form_class):
             return
         if event.button() == Qt.LeftButton:
             px, py = self._label_to_pixmap(event.pos().x(), event.pos().y(), cam_idx)
-            self.roi_points.append((px, py))
+            pw, ph = self.pixmap_sizes[cam_idx]
+            if pw > 0 and ph > 0:
+                self.roi_points.append((px / pw, py / ph))  # 정규화 비율 저장
         elif event.button() == Qt.RightButton:
             if len(self.roi_points) >= 3:
                 self.roi_polygons[self.selected_cam].append(list(self.roi_points))
@@ -399,45 +458,71 @@ class MainWindow(base_class, form_class):
     def _cam_mouse_move(self, event, cam_idx):
         if self.roi_mode and cam_idx == self.selected_cam:
             px, py = self._label_to_pixmap(event.pos().x(), event.pos().y(), cam_idx)
-            self.current_mouse_pos = (px, py)
+            pw, ph = self.pixmap_sizes[cam_idx]
+            if pw > 0 and ph > 0:
+                self.current_mouse_pos = (px / pw, py / ph)  # 정규화 비율
 
     # ── ROI 테이블 ──
     def update_roi_table(self):
-        polys = self.roi_polygons[self.selected_cam]
-        self.tableROI.setRowCount(len(polys))
-        for i, polygon in enumerate(polys):
-            cb_widget = QWidget()
-            cb = QCheckBox()
-            cb_layout = QHBoxLayout(cb_widget)
-            cb_layout.addWidget(cb)
-            cb_layout.setAlignment(Qt.AlignCenter)
-            cb_layout.setContentsMargins(0, 0, 0, 0)
-            self.tableROI.setCellWidget(i, 0, cb_widget)
-            num_item = QTableWidgetItem(str(i + 1))
-            num_item.setTextAlignment(Qt.AlignCenter)
-            self.tableROI.setItem(i, 1, num_item)
-            coords = ", ".join([f"({x},{y})" for x, y in polygon])
-            self.tableROI.setItem(i, 2, QTableWidgetItem(coords))
+        # 모든 카메라의 ROI를 통합 표시
+        all_rois = []
+        for cam_idx in range(MAX_CAMS):
+            for poly_idx, polygon in enumerate(self.roi_polygons[cam_idx]):
+                all_rois.append((cam_idx, poly_idx, polygon))
+
+        display_rows = max(4, len(all_rois))  # 최소 4행 유지
+        self.tableROI.setRowCount(display_rows)
+        self._roi_table_map = all_rois
+
+        for row in range(display_rows):
+            if row < len(all_rois):
+                cam_idx, poly_idx, polygon = all_rois[row]
+
+                cb_widget = QWidget()
+                cb = QCheckBox()
+                cb_layout = QHBoxLayout(cb_widget)
+                cb_layout.addWidget(cb)
+                cb_layout.setAlignment(Qt.AlignCenter)
+                cb_layout.setContentsMargins(0, 0, 0, 0)
+                self.tableROI.setCellWidget(row, 0, cb_widget)
+
+                cam_item = QTableWidgetItem(f"cam{cam_idx + 1}")
+                cam_item.setTextAlignment(Qt.AlignCenter)
+                self.tableROI.setItem(row, 1, cam_item)
+
+                coords = ", ".join([f"({x:.0%},{y:.0%})" for x, y in polygon])
+                self.tableROI.setItem(row, 2, QTableWidgetItem(coords))
+            else:
+                # 빈 행
+                self.tableROI.setCellWidget(row, 0, None)
+                self.tableROI.setItem(row, 1, QTableWidgetItem(""))
+                self.tableROI.setItem(row, 2, QTableWidgetItem(""))
 
     def delete_selected_roi(self):
-        rows = []
-        for i in range(self.tableROI.rowCount()):
-            w = self.tableROI.cellWidget(i, 0)
+        if not hasattr(self, '_roi_table_map'):
+            return
+        to_delete = []
+        for row in range(len(self._roi_table_map)):
+            w = self.tableROI.cellWidget(row, 0)
             if w:
                 cb = w.findChild(QCheckBox)
                 if cb and cb.isChecked():
-                    rows.append(i)
-        if not rows:
+                    cam_idx, poly_idx, _ = self._roi_table_map[row]
+                    to_delete.append((cam_idx, poly_idx))
+        if not to_delete:
             return
-        for i in sorted(rows, reverse=True):
-            self.roi_polygons[self.selected_cam].pop(i)
+        to_delete.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        for cam_idx, poly_idx in to_delete:
+            self.roi_polygons[cam_idx].pop(poly_idx)
         self.update_roi_table()
 
     # ── 깜빡임 ──
-    def _flash_widget(self, widget, duration_ms=2000):
-        original_style = widget.styleSheet()
-        widget.setStyleSheet("QTextEdit { border: 1px solid #dddddd; font-size: 11px; background-color: #f8c8c8; }")
-        QTimer.singleShot(duration_ms, lambda: widget.setStyleSheet(original_style))
+    _TEXTEDIT_NORMAL = "QTextEdit { border: 1px solid #dddddd; font-size: 11px; background-color: #fafafa; }"
+    _TEXTEDIT_FLASH = "QTextEdit { border: 1px solid #dddddd; font-size: 11px; background-color: #f8c8c8; }"
+
+    def _flash_widget(self, widget, duration_ms=5000):
+        widget.setStyleSheet(self._TEXTEDIT_FLASH)
+        QTimer.singleShot(duration_ms, lambda: widget.setStyleSheet(self._TEXTEDIT_NORMAL))
 
     # ── 이벤트 로그 ──
     def _get_timestamp(self):
@@ -461,6 +546,24 @@ class MainWindow(base_class, form_class):
         self.textFalldown.append(msg)
         self._flash_widget(self.textFalldown)
         print(msg)
+
+    def _log_helmet(self, track_id, slot):
+        msg = f"[{self._get_timestamp()}] ID#{track_id} 안전모 미착용 (cam{slot + 1})"
+        self.textHelmet.append(msg)
+        print(msg)
+
+    @staticmethod
+    def _calc_iou(box_a, box_b):
+        """두 박스 (x1,y1,x2,y2) 간의 IoU 계산"""
+        xa = max(box_a[0], box_b[0])
+        ya = max(box_a[1], box_b[1])
+        xb = min(box_a[2], box_b[2])
+        yb = min(box_a[3], box_b[3])
+        inter = max(0, xb - xa) * max(0, yb - ya)
+        area_a = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
+        area_b = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
+        union = area_a + area_b - inter
+        return inter / union if union > 0 else 0
 
     # ── 몸통 각도 ──
     def _calc_torso_angle(self, kpts):
@@ -491,14 +594,13 @@ class MainWindow(base_class, form_class):
 
     # ── ROI 필터링 ──
     def _roi_to_frame_coords(self, frame_w, frame_h, slot):
-        if not self.roi_polygons[slot] or self.pixmap_sizes[slot][0] == 0:
+        """ROI 비율 좌표를 프레임 좌표로 직접 변환"""
+        if not self.roi_polygons[slot]:
             return []
-        scale_x = frame_w / self.pixmap_sizes[slot][0]
-        scale_y = frame_h / self.pixmap_sizes[slot][1]
         frame_polygons = []
         for polygon in self.roi_polygons[slot]:
             converted = np.array(
-                [(int(x * scale_x), int(y * scale_y)) for x, y in polygon],
+                [(int(rx * frame_w), int(ry * frame_h)) for rx, ry in polygon],
                 dtype=np.int32,
             )
             frame_polygons.append(converted)
@@ -551,22 +653,35 @@ class MainWindow(base_class, form_class):
             self.pixmap_offsets[slot] = ((lw - pw) // 2, (lh - ph) // 2)
             self.pixmap_sizes[slot] = (pw, ph)
 
-            # ROI 오버레이
+            # ROI 오버레이 (비율 → 현재 pixmap 좌표로 변환)
             has_roi = bool(self.roi_polygons[slot])
             has_drawing = is_selected and self.roi_mode and self.roi_points
             if has_roi or has_drawing:
                 painter = QPainter(scaled)
                 painter.setRenderHint(QPainter.Antialiasing)
                 for polygon in self.roi_polygons[slot]:
-                    self._draw_polygon(painter, polygon, finished=True)
+                    pixel_pts = [(rx * pw, ry * ph) for rx, ry in polygon]
+                    self._draw_polygon(painter, pixel_pts, finished=True)
                 if has_drawing:
-                    self._draw_polygon(painter, self.roi_points, finished=False)
+                    pixel_pts = [(rx * pw, ry * ph) for rx, ry in self.roi_points]
+                    # current_mouse_pos도 비율이므로 변환
+                    saved_mouse = self.current_mouse_pos
+                    if saved_mouse:
+                        self.current_mouse_pos = (saved_mouse[0] * pw, saved_mouse[1] * ph)
+                    self._draw_polygon(painter, pixel_pts, finished=False)
+                    self.current_mouse_pos = saved_mouse  # 복원
                 painter.end()
 
             label.setPixmap(scaled)
 
         # 버튼 위치 업데이트
         self._reposition_zoom_buttons()
+
+        # ── 안전모 패널 색상 관리 (미착용자 존재 시 분홍색 유지) ──
+        if any(self.helmet_no_hat):
+            self.textHelmet.setStyleSheet(self._TEXTEDIT_FLASH)
+        else:
+            self.textHelmet.setStyleSheet(self._TEXTEDIT_NORMAL)
 
     # ── 카메라별 감지 처리 ──
     def _process_detection(self, frame, slot, now):
@@ -580,6 +695,7 @@ class MainWindow(base_class, form_class):
 
         results = model.track(frame, persist=True, verbose=False)
         current_ids_in_roi = set()
+        person_boxes = []  # (track_id, (x1,y1,x2,y2)) 안전모 판정용
 
         for result in results:
             boxes = result.boxes
@@ -601,6 +717,10 @@ class MainWindow(base_class, form_class):
                     continue
 
                 box_color = (0, 255, 0)
+
+                # 사람 경계상자 수집 (안전모 판정용)
+                if track_id is not None:
+                    person_boxes.append((track_id, (x1, y1, x2, y2)))
 
                 # 침입
                 if track_id is not None and roi_polys:
@@ -653,6 +773,43 @@ class MainWindow(base_class, form_class):
                             self._log_falldown(track_id, slot)
                     else:
                         fall.pop(track_id, None)
+
+        # ── 안전모 감지 ──
+        no_hat_this_frame = False
+        helmet_model = self.helmet_models[slot]
+        if helmet_model is not None and person_boxes:
+            h_results = helmet_model(frame, verbose=False)
+            # 미착용(cls=1) 박스 수집
+            no_hat_boxes = []
+            for h_result in h_results:
+                if h_result.boxes is None:
+                    continue
+                for hbox in h_result.boxes:
+                    h_cls = int(hbox.cls[0])
+                    if h_cls == HELMET_CLS_NO:
+                        hx1, hy1, hx2, hy2 = map(int, hbox.xyxy[0].tolist())
+                        no_hat_boxes.append((hx1, hy1, hx2, hy2))
+
+            # 사람 박스와 미착용 박스 IoU 비교
+            for track_id, pbox in person_boxes:
+                for hbox in no_hat_boxes:
+                    if self._calc_iou(pbox, hbox) > 0.01:
+                        no_hat_this_frame = True
+                        if track_id not in self.helmet_alerted[slot]:
+                            self.helmet_alerted[slot].add(track_id)
+                            self._log_helmet(track_id, slot)
+                        break
+
+            # 미착용자가 없으면 알림 기록 초기화
+            current_no_hat_ids = set()
+            for track_id, pbox in person_boxes:
+                for hbox in no_hat_boxes:
+                    if self._calc_iou(pbox, hbox) > 0.01:
+                        current_no_hat_ids.add(track_id)
+                        break
+            self.helmet_alerted[slot] = self.helmet_alerted[slot] & current_no_hat_ids
+
+        self.helmet_no_hat[slot] = no_hat_this_frame
 
         # 사라진 ID 정리
         gone = [t for t, info in loiter.items()

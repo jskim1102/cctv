@@ -308,7 +308,7 @@
       <property name="spacing"><number>15</number></property>
       <item>
        <widget class="QPushButton" name="btnConnect">
-        <property name="text"><string>카메라 연결</string></property>
+        <property name="text"><string>카메라 재검색</string></property>
         <property name="minimumSize"><size><width>120</width><height>40</height></size></property>
         <property name="styleSheet">
          <string notr="true">QPushButton { font-size: 13px; font-weight: bold; padding: 8px 16px; border: 1px solid #aaaaaa; border-radius: 3px; background-color: #e8e8e8; } QPushButton:hover { background-color: #d0d0d0; } QPushButton:pressed { background-color: #c0c0c0; }</string>
@@ -396,8 +396,8 @@
       <layout class="QHBoxLayout" name="roiLayout">
        <item>
         <widget class="QTableWidget" name="tableROI">
-         <property name="minimumSize"><size><width>0</width><height>60</height></size></property>
-         <property name="maximumSize"><size><width>16777215</width><height>100</height></size></property>
+         <property name="minimumSize"><size><width>0</width><height>130</height></size></property>
+         <property name="maximumSize"><size><width>16777215</width><height>130</height></size></property>
          <property name="styleSheet">
           <string notr="true">QTableWidget { border: 1px solid #dddddd; font-size: 13px; font-weight: bold; background-color: #fafafa; } QHeaderView::section { font-size: 13px; font-weight: bold; background-color: #f0f0f0; border: 1px solid #dddddd; padding: 4px; }</string>
          </property>
